@@ -481,6 +481,87 @@ Certificados **válidos, confiables y gratis**. Durabilidad: **90 días** pero s
 - Acceso a internet desde el servidor
 - Puerto 80 o 443 accesible
 
+---
+
+#### 📋 Paso 0: Preparar Dominio en Cloudflare (CRÍTICO)
+
+**¿Por qué es necesario?**
+
+Certbot necesita validar que TÚ eres el dueño del dominio. Para eso:
+1. Let's Encrypt verifica que el dominio apunte a tu servidor
+2. Si el dominio no apunta a tu IP, la validación falla
+3. Sin validación, no hay certificado
+
+**Cómo hacerlo:**
+
+Asumiendo tu dominio es `ejaniot.com` y quieres `postgres.ejaniot.com`:
+
+1. **Entra en Cloudflare:**
+   ```
+   https://dash.cloudflare.com
+   Selecciona tu dominio (ejaniot.com)
+   ```
+
+2. **Ve a DNS → Records:**
+   ```
+   Click en "Add record"
+   ```
+
+3. **Crea el registro A (apuntando a tu servidor):**
+   ```
+   Type: A
+   Name: postgres (así crea postgres.ejaniot.com)
+   IPv4 address: TU_IP_PUBLICA (ej: 203.0.113.50)
+   TTL: Auto
+   Proxied: OFF (⚠️ IMPORTANTE: NO proxied)
+   ```
+
+4. **Verifica que funciona:**
+   ```bash
+   # Desde tu máquina local:
+   ping postgres.ejaniot.com
+   # Debe mostrar: tu_ip_publica
+   
+   # O:
+   nslookup postgres.ejaniot.com
+   # Debe mostrar: tu_ip_publica
+   ```
+
+**⚠️ IMPORTANTE: NO Proxied**
+
+Si está "Proxied" (nube naranja), Let's Encrypt no puede validar.
+Debe estar "DNS only" (nube gris).
+
+```
+✅ Correcto: postgres.ejaniot.com → DNS only → tu_ip_publica
+❌ Incorrecto: postgres.ejaniot.com → Proxied → tu_ip_publica
+```
+
+---
+
+#### 🌐 Alternativa: Usar tu Dominio Principal
+
+En lugar de subdomain `postgres.ejaniot.com`, podrías usar:
+
+**Opción 1: Subdominio específico (RECOMENDADO)**
+```
+postgres.ejaniot.com
+```
+
+**Opción 2: Root domain**
+```
+ejaniot.com (apunta al servidor)
+```
+
+**Opción 3: Wildcard (cualquier subdominio)**
+```
+*.ejaniot.com
+```
+
+Para este tutorial, usaremos `postgres.ejaniot.com`.
+
+---
+
 **Instalación de Certbot:**
 
 ```bash
