@@ -1,0 +1,189 @@
+# ============================================================================
+# PostgreSQL 15 - Configuración de Ejemplo
+# ============================================================================
+# Este archivo es un ejemplo de configuración. Localiza el archivo real en:
+# /etc/postgresql/15/main/postgresql.conf
+#
+# Todas las líneas comentadas con # son deshabilitadas (usan valores por defecto)
+# Descomenta y edita según tus necesidades
+# ============================================================================
+
+# ESCUCHA DE RED
+# ==============================================================================
+
+# Direcciones en las que PostgreSQL escucha
+# - 'localhost' : Solo conexiones locales
+# - '*' : Todas las interfaces (IPv4)
+# - '0.0.0.0, ::' : Todas las interfaces (IPv4 e IPv6)
+# - '192.168.1.10' : Solo en esa IP específica
+listen_addresses = 'localhost'
+
+# Puerto en el que escucha (por defecto 5432)
+port = 5432
+
+# Número máximo de intentos de conexión simultánea
+max_connections = 100
+
+# Conexiones reservadas para superusuario
+superuser_reserved_connections = 3
+
+# ============================================================================
+# MEMORIA
+# ============================================================================
+
+# Memoria compartida (shared buffers)
+# Regla: 25% de RAM disponible
+# Ejemplos:
+#   - 512 MB para servidor de 2GB RAM
+#   - 1GB para servidor de 4GB RAM
+#   - 4GB para servidor de 16GB RAM
+shared_buffers = 128MB
+
+# Memoria de buffer para escritura
+wal_buffers = 16MB
+
+# Memoria efectiva de caché
+# Regla: 50-75% de RAM disponible (para OS + aplicaciones + DB)
+effective_cache_size = 512MB
+
+# ============================================================================
+# CONEXIONES Y LÍMITES
+# ============================================================================
+
+# Timeout de conexión inactiva (en segundos, 0 = deshabilitado)
+idle_in_transaction_session_timeout = 0
+
+# Timeout de statement (en milisegundos, 0 = deshabilitado)
+statement_timeout = 0
+
+# Timeout de conexión (segundos)
+tcp_keepalives_idle = 900
+tcp_keepalives_interval = 30
+tcp_keepalives_count = 5
+
+# ============================================================================
+# LOGS
+# ============================================================================
+
+# Archivo de logs
+log_directory = '/var/log/postgresql'
+log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
+
+# Rotación de logs (en MB)
+log_file_mode = 0600
+log_truncate_on_rotation = on
+log_rotation_age = 1d
+log_rotation_size = 100MB
+
+# Qué registrar
+log_connections = on
+log_disconnections = on
+log_duration = off
+
+# Registrar queries lentas (en milisegundos)
+log_min_duration_statement = 1000
+
+# Registrar cambios de configuración
+log_statement = 'none'  # O 'all', 'ddl', 'mod'
+
+# ============================================================================
+# SSL/TLS (Para Conexiones Seguras)
+# ============================================================================
+
+# Habilitar SSL
+ssl = off
+
+# Certificado (ruta)
+# ssl_cert_file = '/etc/postgresql/15/main/server.crt'
+
+# Clave privada
+# ssl_key_file = '/etc/postgresql/15/main/server.key'
+
+# ============================================================================
+# PERFORMANCE TUNING
+# ============================================================================
+
+# Random Page Cost (para HDD = 4.0, para SSD = 1.1)
+random_page_cost = 1.1
+
+# Effective I/O Concurrency (para SSD = 200, para HDD = 0)
+effective_io_concurrency = 200
+
+# Work Memory (por operación de sort/hash, en KB)
+# Total máximo: work_mem * max_connections
+work_mem = 4MB
+
+# Maintenance Work Memory (para VACUUM, ANALYZE, etc)
+maintenance_work_mem = 64MB
+
+# ============================================================================
+# AUTOVACUUM (Limpieza Automática)
+# ============================================================================
+
+autovacuum = on
+autovacuum_max_workers = 3
+autovacuum_naptime = '10s'
+
+# ============================================================================
+# CHECKPOINT (Puntos de Control)
+# ============================================================================
+
+# Intervalo de checkpoint (en MB de WAL)
+max_wal_size = 4GB
+min_wal_size = 1GB
+
+# ============================================================================
+# REPLICACIÓN (Standby/HA)
+# ============================================================================
+
+# Modo wal (archival / replica / off)
+wal_level = replica
+
+# Máximo de replicas en espera
+max_wal_senders = 3
+
+# ============================================================================
+# ESTADÍSTICAS
+# ============================================================================
+
+# Habilitar estadísticas de ejecución
+track_activities = on
+track_counts = on
+track_io_timing = off
+
+# ============================================================================
+# COMPORTAMIENTO
+# ============================================================================
+
+# Zona horaria del servidor
+timezone = 'UTC'
+
+# Codificación por defecto
+encoding = 'UTF8'
+
+# Locale
+lc_messages = 'en_US.UTF-8'
+lc_monetary = 'en_US.UTF-8'
+lc_numeric = 'en_US.UTF-8'
+lc_time = 'en_US.UTF-8'
+
+# ============================================================================
+# CONFIGURACIÓN DE EJEMPLO PARA PRODUCCIÓN PEQUEÑA
+# ============================================================================
+# Si descomentas esta sección, comenta lo anterior
+#
+# listen_addresses = '*'
+# port = 5432
+# max_connections = 200
+# superuser_reserved_connections = 5
+# shared_buffers = 1GB
+# wal_buffers = 16MB
+# effective_cache_size = 2GB
+# work_mem = 10MB
+# maintenance_work_mem = 256MB
+# random_page_cost = 1.1
+# effective_io_concurrency = 200
+# log_connections = on
+# log_disconnections = on
+# log_min_duration_statement = 1000
+# ============================================================================

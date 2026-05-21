@@ -1,0 +1,227 @@
+# ============================================================================
+# PostgreSQL 15 - Control de Acceso (pg_hba.conf)
+# ============================================================================
+# Este archivo controla la autenticación para conexiones a PostgreSQL.
+# El archivo real se encuentra en: /etc/postgresql/15/main/pg_hba.conf
+#
+# ESTRUCTURA DE CADA LÍNEA:
+# TYPE    DATABASE    USER    ADDRESS           METHOD
+# 
+# TYPE:
+#   - local: Conexión por socket Unix (solo local)
+#   - host:  Conexión TCP/IP (remota)
+#   - hostssl: Conexión TCP/IP con SSL obligatorio
+#   - hostnossl: Conexión TCP/IP sin SSL
+#
+# DATABASE:
+#   - all: Todas las bases de datos
+#   - nombre_bd: Específica (ej: postgres, template1)
+#   - @archivo: Desde archivo
+#
+# USER:
+#   - all: Todos los usuarios
+#   - nombre_usuario: Específico (ej: postgres, app_user)
+#   - +nombre_rol: Usuarios con ese rol
+#
+# ADDRESS:
+#   - 127.0.0.1/32: Solo localhost IPv4
+#   - ::1/128: Solo localhost IPv6
+#   - 0.0.0.0/0: Cualquier IPv4
+#   - ::/0: Cualquier IPv6
+#   - 192.168.1.0/24: Red 192.168.1.x
+#   - 10.0.0.5/32: IP específica
+#
+# METHOD:
+#   - trust: Sin contraseña (SOLO para local)
+#   - reject: Rechazar siempre
+#   - md5: Autenticación con hash MD5 (DEPRECATED)
+#   - scram-sha-256: Autenticación segura (RECOMENDADO)
+#   - ident: Autenticación por user del SO (Unix)
+#   - password: Texto plano (NO USAR)
+#   - gss: Kerberos
+#
+# ============================================================================
+
+# CONEXIONES LOCALES (Socket Unix)
+# ==============================================================================
+
+# Base de datos de mantenimiento - sin contraseña
+local   postgres        postgres                                trust
+
+# Todas las bases de datos - todos los usuarios - sin contraseña
+# (Útil para desarrollo, pero NUNCA en producción)
+local   all             all                                     trust
+
+# ============================================================================
+# CONFIGURACIÓN 1: DESARROLLO LOCAL
+# (Solo conexiones desde la misma máquina)
+# ============================================================================
+
+# Conexión TCP desde localhost
+host    all             all             127.0.0.1/32            scram-sha-256
+host    all             all             ::1/128                 scram-sha-256
+
+# Rechazar todo lo demás
+host    all             all             0.0.0.0/0               reject
+host    all             all             ::/0                    reject
+
+# ============================================================================
+# CONFIGURACIÓN 2: RED LOCAL PRIVADA
+# (Permite conexiones desde red 192.168.1.x con contraseña)
+# ============================================================================
+
+# local socket
+#local   all             all                                     trust
+
+# localhost
+#host    all             all             127.0.0.1/32            scram-sha-256
+#host    all             all             ::1/128                 scram-sha-256
+
+# Red privada (192.168.1.x)
+#host    all             all             192.168.1.0/24          scram-sha-256
+
+# Rechazar todo lo demás
+#host    all             all             0.0.0.0/0               reject
+#host    all             all             ::/0                    reject
+
+# ============================================================================
+# CONFIGURACIÓN 3: MÚLTIPLES REDES + RESTRICCIÓN POR USUARIO
+# (Red local + VPN + App server)
+# ============================================================================
+
+# local
+#local   all             all                                     trust
+
+# localhost IPv4 e IPv6
+#host    all             all             127.0.0.1/32            scram-sha-256
+#host    all             all             ::1/128                 scram-sha-256
+
+# Red local (192.168.1.x) - todos los usuarios
+#host    all             all             192.168.1.0/24          scram-sha-256
+
+# VPN (10.0.0.x) - solo usuario 'app'
+#host    all             app             10.0.0.0/24             scram-sha-256
+
+# App server específico (203.0.113.50) - solo usuario 'app'
+#host    all             app             203.0.113.50/32         scram-sha-256
+
+# Admin solo desde localhost
+#host    postgres        postgres        127.0.0.1/32            scram-sha-256
+
+# Rechazar todo lo demás
+#host    all             all             0.0.0.0/0               reject
+#host    all             all             ::/0                    reject
+
+# ============================================================================
+# CONFIGURACIÓN 4: ACCESO REMOTO ABIERTO (MENOS SEGURO)
+# (Cualquiera puede intentar conectar)
+# ============================================================================
+
+# local
+#local   all             all                                     trust
+
+# localhost
+#host    all             all             127.0.0.1/32            scram-sha-256
+#host    all             all             ::1/128                 scram-sha-256
+
+# Cualquier lugar (IPv4 e IPv6)
+#host    all             all             0.0.0.0/0               scram-sha-256
+#host    all             all             ::/0                    scram-sha-256
+
+# ============================================================================
+# CONFIGURACIÓN 5: ALTA SEGURIDAD CON SSL OBLIGATORIO
+# (Producción profesional)
+# ============================================================================
+
+# local
+#local   all             all                                     trust
+
+# localhost sin SSL (para herramientas locales)
+#host    all             all             127.0.0.1/32            scram-sha-256
+#host    all             all             ::1/128                 scram-sha-256
+
+# Red privada CON SSL obligatorio
+#hostssl all             all             192.168.1.0/24          scram-sha-256
+
+# VPN CON SSL obligatorio
+#hostssl all             all             10.0.0.0/24             scram-sha-256
+
+# Usuario postgres SOLO desde localhost
+#host    postgres        postgres        127.0.0.1/32            scram-sha-256
+#hostssl postgres        postgres        0.0.0.0/0               reject
+
+# Rechazar todo lo demás
+#hostssl all             all             0.0.0.0/0               reject
+#hostssl all             all             ::/0                    reject
+
+# ============================================================================
+# CONFIGURACIÓN 6: MÚLTIPLES APLICACIONES CON USUARIOS DIFERENTES
+# ============================================================================
+
+# local
+#local   all             all                                     trust
+
+# localhost
+#host    all             all             127.0.0.1/32            scram-sha-256
+#host    all             all             ::1/128                 scram-sha-256
+
+# Aplicación 1: user 'app1' desde 192.168.1.100
+#host    app_db_1        app1            192.168.1.100/32        scram-sha-256
+
+# Aplicación 2: user 'app2' desde 192.168.1.101
+#host    app_db_2        app2            192.168.1.101/32        scram-sha-256
+
+# Aplicación 3: user 'app3' desde VPN (10.0.0.0/24)
+#host    app_db_3        app3            10.0.0.0/24             scram-sha-256
+
+# Admin: user 'admin' desde red local (pero no 10.0.0.x)
+#host    all             admin           192.168.1.0/24          scram-sha-256
+
+# Rechazar TODO lo demás
+#host    all             all             0.0.0.0/0               reject
+#host    all             all             ::/0                    reject
+
+# ============================================================================
+# REGLAS ESPECIALES Y EJEMPLOS ADICIONALES
+# ============================================================================
+
+# Tabla de usuarios permitidos (en archivo externo)
+# host    all             @file           192.168.1.0/24          scram-sha-256
+
+# Rechazar base de datos específica desde cierta IP
+# host    template0       all             203.0.113.0/24          reject
+# host    template1       all             203.0.113.0/24          reject
+
+# Permitir solo de 8 AM a 6 PM de lunes a viernes (requiere PAM)
+# host    all             app             192.168.1.0/24          scram-sha-256 clientcert=verify-full
+
+# ============================================================================
+# NOTAS DE SEGURIDAD
+# ============================================================================
+#
+# 1. El orden IMPORTA: PostgreSQL usa la PRIMERA línea que coincida
+#    Pon las reglas más específicas primero, genéricas al final
+#
+# 2. NUNCA uses "trust" para conexiones remotas
+#
+# 3. SIEMPRE comienza con localhost permitido y todo lo demás rechazado
+#
+# 4. Para producción, usa "scram-sha-256" en lugar de "md5"
+#
+# 5. Si usas SSL, prefiere "hostssl" sobre "host"
+#
+# 6. Documento oficial: https://www.postgresql.org/docs/15/auth-pg-hba-conf.html
+#
+# ============================================================================
+
+# EJEMPLO FINAL RECOMENDADO PARA PRODUCCIÓN
+# Descomenta esto y comenta todo lo anterior
+
+#local   all             postgres                                trust
+#local   all             all                                     scram-sha-256
+#host    all             all             127.0.0.1/32            scram-sha-256
+#host    all             all             ::1/128                 scram-sha-256
+#hostssl all             all             192.168.1.0/24          scram-sha-256
+#hostssl all             all             10.0.0.0/24             scram-sha-256
+#host    all             all             0.0.0.0/0               reject
+#host    all             all             ::/0                    reject
