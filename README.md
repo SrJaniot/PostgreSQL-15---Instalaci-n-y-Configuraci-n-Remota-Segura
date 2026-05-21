@@ -692,17 +692,55 @@ sudo crontab -e
 ```bash
 # Ubuntu/Debian
 sudo apt update
-sudo apt install -y certbot python3-certbot
+sudo apt install -y certbot python3-certbot python3-certbot-dns-cloudflare
 
 # CentOS/Rocky
-sudo dnf install -y certbot
+sudo dnf install -y certbot python3-certbot-dns-cloudflare
 ```
 
-**Paso 3.2: Generar certificado para tu dominio**
+**Paso 3.1b: Configurar credenciales de Cloudflare para Certbot (RECOMENDADO)**
+
+Para renovación automática sin detener PostgreSQL, usa validación DNS de Cloudflare:
 
 ```bash
-# Solicitar certificado para postgres.ejaniot.com
-sudo certbot certonly --standalone \
+# Crear carpeta de configuración
+mkdir -p ~/.cloudflare
+
+# Crear archivo de credenciales
+nano ~/.cloudflare/cloudflare.ini
+```
+
+Pega esto en el archivo (reemplaza con tu token real):
+
+```ini
+# Token de Cloudflare para validación DNS automática
+dns_cloudflare_api_token = TU_TOKEN_CLOUDFLARE_AQUI
+```
+
+Guarda y cierra (Ctrl+X, Y, Enter)
+
+Ahora asegúrate de que solo TÚ puedas leer este archivo (contiene tu token):
+
+```bash
+chmod 600 ~/.cloudflare/cloudflare.ini
+ls -la ~/.cloudflare/cloudflare.ini  # Debe mostrar: -rw------- (600)
+```
+
+**¿Por qué esto?**
+- Certbot puede renovar automáticamente sin parar PostgreSQL
+- Validación DNS: Cloudflare verifica que controlas el dominio
+- No necesitas puerto 80 disponible como con `--standalone`
+- Renovación cada 90 días sin intervención manual
+
+---
+
+**Paso 3.2: Generar certificado para tu dominio (CON DNS Cloudflare)**
+
+```bash
+# Solicitar certificado usando validación DNS de Cloudflare
+sudo certbot certonly \
+  --dns-cloudflare \
+  --dns-cloudflare-credentials ~/.cloudflare/cloudflare.ini \
   -d postgres.ejaniot.com \
   --email tu_email@gmail.com \
   --agree-tos \
@@ -713,6 +751,17 @@ sudo certbot certonly --standalone \
 # /etc/letsencrypt/live/postgres.ejaniot.com/privkey.pem
 # /etc/letsencrypt/live/postgres.ejaniot.com/cert.pem
 # /etc/letsencrypt/live/postgres.ejaniot.com/chain.pem
+```
+
+**Alternativa: Si no puedes usar DNS Cloudflare (sin credenciales configuradas)**
+
+```bash
+# Método standalone (requiere puerto 80 disponible)
+sudo certbot certonly --standalone \
+  -d postgres.ejaniot.com \
+  --email tu_email@gmail.com \
+  --agree-tos \
+  --non-interactive
 ```
 
 **¿Qué archivo usar en PostgreSQL?**
