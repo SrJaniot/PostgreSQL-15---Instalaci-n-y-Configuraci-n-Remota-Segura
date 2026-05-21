@@ -245,6 +245,77 @@ sudo iptables-save > /etc/iptables/rules.v4
 
 ---
 
+### ⚠️ Observación Importante: Port Forwarding en Router/Módem
+
+Si quieres acceder a PostgreSQL **desde internet** (no solo desde la red local), debes configurar **Port Forwarding** en tu router/módem:
+
+**¿Por qué es necesario?**
+- Tu servidor está en la red interna (ej: 192.168.1.10:5432)
+- Los usuarios externos tienen tu IP pública (ej: 203.0.113.50)
+- El router/módem necesita redirigir el tráfico externo hacia tu servidor interno
+
+**Pasos para configurar Port Forwarding:**
+
+1. **Ingresa al panel del router**
+   ```
+   Abre navegador → http://192.168.1.1 (o la IP de tu router)
+   Usuario y contraseña: (por defecto en la etiqueta del router)
+   ```
+
+2. **Busca la sección "Port Forwarding" o "Reenvío de Puertos"**
+   - Suele estar en: Configuración Avanzada → NAT → Port Forwarding
+   - Puede variar según marca (TP-Link, Netgear, D-Link, Huawei, etc.)
+
+3. **Configura la redirección:**
+   - **Puerto Externo:** 5432 (o el que prefieras, ej: 15432)
+   - **Puerto Interno:** 5432
+   - **IP Destino Interna:** 192.168.1.10 (IP de tu servidor PostgreSQL)
+   - **Protocolo:** TCP
+   - **Guardar/Aplicar**
+
+**Ejemplo de configuración:**
+| Campo | Valor |
+|-------|-------|
+| Puerto Externo | 5432 |
+| Puerto Interno | 5432 |
+| IP Destino | 192.168.1.10 |
+| Protocolo | TCP |
+| Estado | Habilitado |
+
+**Alternativa segura: Usar puerto diferente**
+- Puerto Externo: 15432
+- Puerto Interno: 5432
+- De esta forma ocultas que usas PostgreSQL (seguridad por oscuridad)
+
+**Verificar que funciona:**
+```bash
+# Desde fuera de tu red (en otra máquina con internet diferente):
+psql -h tu_ip_publica -p 5432 -U usuario_app -d mi_app
+
+# Si usaste puerto diferente:
+psql -h tu_ip_publica -p 15432 -U usuario_app -d mi_app
+```
+
+**⚠️ ADVERTENCIA DE SEGURIDAD:**
+- ❌ **NO expongas PostgreSQL directamente a internet sin SSL/TLS**
+- ❌ **NO uses contraseñas débiles**
+- ❌ **NO permitas acceso de usuario "postgres" desde internet**
+- ✅ **USA SSL/TLS obligatorio** (ver sección de SSL más abajo)
+- ✅ **USA contraseñas muy fuertes** (mínimo 16 caracteres)
+- ✅ **Limita a IPs específicas si es posible**
+- ✅ **Monitorea logs regularmente**
+
+**Alternativa más segura: SSH Tunnel**
+```bash
+# Desde tu máquina local:
+ssh -L 5432:localhost:5432 usuario@tu_ip_publica
+
+# Luego conecta a localhost como si fuera local:
+psql -h localhost -U usuario_app -d mi_app
+```
+
+---
+
 ### Paso 4: Reiniciar PostgreSQL
 
 Después de cambios en configuración:
