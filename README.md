@@ -544,6 +544,23 @@ En Cloudflare Dashboard:
 5. Click en "Save"
 ```
 
+**NOTA: Alternativa con CNAME (para IPs Dinámicas)**
+
+Si tu ISP te cambia la IP frecuentemente y prefieres **NO actualizar postgres.ejaniot.com constantemente**, puedes usar CNAME:
+
+```
+1. Crea un registro A para ejaniot.com apuntando a tu IP (este sí se actualiza automáticamente)
+2. Crea un registro CNAME para postgres.ejaniot.com apuntando a ejaniot.com
+   - Type: CNAME
+   - Name: postgres
+   - Target: ejaniot.com
+   - TTL: Auto
+   - Proxied: OFF ⚠️ (Debe ser "DNS only")
+
+Ventaja: El script solo actualiza ejaniot.com, y postgres.ejaniot.com se resuelve automáticamente
+Desventaja: Una actualización más en la cadena DNS, pero imperceptible en latencia
+```
+
 **⚠️ IMPORTANTE: Proxied vs DNS Only**
 
 ```
