@@ -736,6 +736,14 @@ ls -la ~/.cloudflare/cloudflare.ini  # Debe mostrar: -rw------- (600)
 
 **Paso 3.2: Generar certificado para tu dominio (CON DNS Cloudflare)**
 
+✅ **COMO LO HICIMOS EN NUESTRO SERVIDOR:**
+
+```bash
+sudo certbot certonly --dns-cloudflare --dns-cloudflare-credentials ~/.cloudflare/cloudflare.ini -d postgres.ejaniot.com
+```
+
+O de forma expandida (es lo mismo):
+
 ```bash
 # Solicitar certificado usando validación DNS de Cloudflare
 sudo certbot certonly \
