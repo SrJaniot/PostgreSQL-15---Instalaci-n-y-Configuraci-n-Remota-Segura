@@ -230,6 +230,12 @@ sudo ufw allow from 192.168.1.100 to any port 5432
 # Abrir para un rango de IPs
 sudo ufw allow from 192.168.1.0/24 to any port 5432
 
+# Abrir para cualquier IP (menos seguro)
+sudo ufw allow 5432/tcp
+
+# eliminar reglas anteriores si es necesario
+sudo ufw delete allow 5432/tcp
+
 # Ver reglas
 sudo ufw status
 ```
@@ -483,86 +489,188 @@ Certificados **válidos, confiables y gratis**. Durabilidad: **90 días** pero s
 
 ---
 
-#### 📋 Paso 0: Preparar Dominio en Cloudflare (CRÍTICO)
+#### 📋 GUÍA COMPLETA: Cloudflare + Certbot + Let's Encrypt + PostgreSQL SSL
 
-**¿Por qué es necesario?**
+Esta sección explica en detalle cómo configurar SSL/TLS correctamente, incluyendo todos los errores que cometimos y sus soluciones.
 
-Certbot necesita validar que TÚ eres el dueño del dominio. Para eso:
-1. Let's Encrypt verifica que el dominio apunte a tu servidor
-2. Si el dominio no apunta a tu IP, la validación falla
-3. Sin validación, no hay certificado
+---
 
-**Cómo hacerlo:**
+##### **PASO 1: Configurar Dominio en Cloudflare (DNS)**
 
-Asumiendo tu dominio es `ejaniot.com` y quieres `postgres.ejaniot.com`:
+**¿Por qué Cloudflare?**
+- DNS gratuito y rápido
+- Permite actualizar dinámicamente la IP cuando cambia
+- Gestión centralizada de dominios
+- Compatible con Let's Encrypt
 
-1. **Entra en Cloudflare:**
-   ```
-   https://dash.cloudflare.com
-   Selecciona tu dominio (ejaniot.com)
-   ```
+**Requisitos:**
+- Tu dominio registrado (ej: `ejaniot.com`)
+- Cuenta de Cloudflare (gratuita en https://www.cloudflare.com)
 
-2. **Ve a DNS → Records:**
-   ```
-   Click en "Add record"
-   ```
-
-3. **Crea el registro A (apuntando a tu servidor):**
-   ```
-   Type: A
-   Name: postgres (así crea postgres.ejaniot.com)
-   IPv4 address: TU_IP_PUBLICA (ej: 203.0.113.50)
-   TTL: Auto
-   Proxied: OFF (⚠️ IMPORTANTE: NO proxied)
-   ```
-
-4. **Verifica que funciona:**
-   ```bash
-   # Desde tu máquina local:
-   ping postgres.ejaniot.com
-   # Debe mostrar: tu_ip_publica
-   
-   # O:
-   nslookup postgres.ejaniot.com
-   # Debe mostrar: tu_ip_publica
-   ```
-
-**⚠️ IMPORTANTE: NO Proxied**
-
-Si está "Proxied" (nube naranja), Let's Encrypt no puede validar.
-Debe estar "DNS only" (nube gris).
+**Paso 1.1: Agregar dominio a Cloudflare**
 
 ```
-✅ Correcto: postgres.ejaniot.com → DNS only → tu_ip_publica
-❌ Incorrecto: postgres.ejaniot.com → Proxied → tu_ip_publica
+1. Ve a https://dash.cloudflare.com
+2. Click en "Add a site"
+3. Escribe tu dominio: ejaniot.com
+4. Selecciona plan "Free" (gratuito)
+5. Cloudflare te mostrará sus nameservers (NS)
+```
+
+**Paso 1.2: Actualizar nameservers en tu registrador**
+
+Cloudflare te dirá algo como:
+```
+Usa estos nameservers:
+- alice.ns.cloudflare.com
+- bob.ns.cloudflare.com
+```
+
+Ve a tu registrador (GoDaddy, Namecheap, etc.) y cambia los nameservers a los de Cloudflare.
+
+**Paso 1.3: Crear registro A para subdominio postgres**
+
+En Cloudflare Dashboard:
+```
+1. Ve a tu dominio (ejaniot.com)
+2. Click en "DNS" en el menú izquierdo
+3. Click en "Add record"
+4. Rellena:
+   - Type: A
+   - Name: postgres (esto crea postgres.ejaniot.com)
+   - IPv4 address: TU_IP_PUBLICA (ej: 186.115.81.13)
+   - TTL: Auto
+   - Proxied: OFF ⚠️ (CRÍTICO: Debe ser "DNS only" - nube gris)
+5. Click en "Save"
+```
+
+**⚠️ IMPORTANTE: Proxied vs DNS Only**
+
+```
+✅ CORRECTO (DNS only - nube gris):
+postgres.ejaniot.com → [gray cloud] → apunta directamente a 186.115.81.13
+Let's Encrypt puede validar: ✅
+
+❌ INCORRECTO (Proxied - nube naranja):
+postgres.ejaniot.com → [orange cloud] → intermediario Cloudflare
+Let's Encrypt NO puede validar: ❌ FALLA
+```
+
+**¿Por qué DNS only?**
+- Let's Encrypt necesita verificar que el dominio apunta a TU servidor
+- Si Cloudflare está entre medio (proxied), Let's Encrypt ve a Cloudflare, no a ti
+- Para PostgreSQL, no necesitamos proxy de Cloudflare (no es HTTP)
+
+**Paso 1.4: Verificar que el DNS apunta correctamente**
+
+```bash
+# Desde tu máquina local (no en el servidor):
+nslookup postgres.ejaniot.com
+# Debe mostrar tu IP pública: 186.115.81.13
+
+# O:
+dig postgres.ejaniot.com
+# Busca la línea "ANSWER SECTION" y verifica tu IP
+```
+
+Si ves tu IP pública correctamente, ✅ el DNS está bien configurado.
+
+---
+
+##### **PASO 2: Preparar tu IP Dinámica (Cloudflare API)**
+
+**¿Por qué esto?**
+Tu ISP (Movistar) puede cambiar tu IP pública en cualquier momento. Necesitas actualizar automáticamente el registro DNS en Cloudflare.
+
+**Paso 2.1: Obtener API Token de Cloudflare**
+
+```
+1. Ve a https://dash.cloudflare.com/profile/api-tokens
+2. Click en "Create Token"
+3. Selecciona "Edit zone DNS" (permiso limitado, más seguro)
+4. En "Zone Resources" selecciona tu dominio (ejaniot.com)
+5. Click en "Continue to summary"
+6. Click en "Create Token"
+7. Copia el token (algo como: `cfut_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`)
+```
+
+**⚠️ IMPORTANTE:** Guarda este token en un lugar seguro (ej: `/home/ejaniot/cloudflare-token.txt`)
+
+**⚠️ NUNCA expongas este token en público (Git, documentación pública, etc.)**
+
+```bash
+# En tu servidor (reemplaza TU_TOKEN_AQUI con tu token real):
+echo "TU_TOKEN_CLOUDFLARE_AQUI" > ~/.cloudflare-token
+chmod 600 ~/.cloudflare-token
+```
+
+**Paso 2.2: Crear script para actualizar IP automáticamente**
+
+```bash
+sudo nano /usr/local/bin/update-cloudflare-dns.sh
+```
+
+Copia este script (reemplaza tu dominio y email):
+
+```bash
+#!/bin/bash
+
+# Cloudflare API
+CLOUDFLARE_TOKEN="TU_TOKEN_CLOUDFLARE_AQUI"  # Reemplazar con tu token real
+ZONE_ID="tu_zone_id"  # Lo obtienes de Cloudflare Dashboard
+RECORD_NAME="postgres.ejaniot.com"
+RECORD_ID="tu_record_id"  # Lo obtienes de Cloudflare Dashboard
+
+# Obtener IP pública actual
+CURRENT_IP=$(curl -s https://api.ipify.org)
+
+# Actualizar en Cloudflare
+curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$RECORD_ID" \
+  -H "Authorization: Bearer $CLOUDFLARE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"type\": \"A\",
+    \"name\": \"$RECORD_NAME\",
+    \"content\": \"$CURRENT_IP\",
+    \"ttl\": 3600,
+    \"proxied\": false
+  }" | grep -q '"success":true'
+
+if [ $? -eq 0 ]; then
+  echo "[$(date)] DNS actualizado a $CURRENT_IP"
+else
+  echo "[$(date)] ERROR: Fallo al actualizar DNS"
+fi
+```
+
+**Nota:** Para obtener ZONE_ID y RECORD_ID:
+```bash
+# ZONE_ID (ID de tu dominio):
+curl -s -H "Authorization: Bearer $CLOUDFLARE_TOKEN" \
+  https://api.cloudflare.com/client/v4/zones | jq '.result[] | select(.name=="ejaniot.com") | .id'
+
+# RECORD_ID (ID del registro postgres):
+curl -s -H "Authorization: Bearer $CLOUDFLARE_TOKEN" \
+  https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records | jq '.result[] | select(.name=="postgres.ejaniot.com") | .id'
+```
+
+**Paso 2.3: Automatizar actualización de DNS cada hora**
+
+```bash
+sudo chmod +x /usr/local/bin/update-cloudflare-dns.sh
+
+# Agregar a crontab
+sudo crontab -e
+
+# Agregar esta línea (ejecuta cada hora):
+0 * * * * /usr/local/bin/update-cloudflare-dns.sh >> /var/log/cloudflare-dns-update.log 2>&1
 ```
 
 ---
 
-#### 🌐 Alternativa: Usar tu Dominio Principal
+##### **PASO 3: Instalar Certbot y Generar Certificado Let's Encrypt**
 
-En lugar de subdomain `postgres.ejaniot.com`, podrías usar:
-
-**Opción 1: Subdominio específico (RECOMENDADO)**
-```
-postgres.ejaniot.com
-```
-
-**Opción 2: Root domain**
-```
-ejaniot.com (apunta al servidor)
-```
-
-**Opción 3: Wildcard (cualquier subdominio)**
-```
-*.ejaniot.com
-```
-
-Para este tutorial, usaremos `postgres.ejaniot.com`.
-
----
-
-**Instalación de Certbot:**
+**Paso 3.1: Instalar Certbot**
 
 ```bash
 # Ubuntu/Debian
@@ -573,53 +681,271 @@ sudo apt install -y certbot python3-certbot
 sudo dnf install -y certbot
 ```
 
-**Generar certificado Let's Encrypt:**
+**Paso 3.2: Generar certificado para tu dominio**
 
 ```bash
-# Solicitar certificado (reemplaza "postgres.tudominio.com" con tu dominio)
-sudo certbot certonly --standalone -d postgres.tudominio.com --email tu_email@gmail.com --agree-tos
+# Solicitar certificado para postgres.ejaniot.com
+sudo certbot certonly --standalone \
+  -d postgres.ejaniot.com \
+  --email tu_email@gmail.com \
+  --agree-tos \
+  --non-interactive
 
-# Se genera en: /etc/letsencrypt/live/postgres.tudominio.com/
+# Certbot genera:
+# /etc/letsencrypt/live/postgres.ejaniot.com/fullchain.pem
+# /etc/letsencrypt/live/postgres.ejaniot.com/privkey.pem
+# /etc/letsencrypt/live/postgres.ejaniot.com/cert.pem
+# /etc/letsencrypt/live/postgres.ejaniot.com/chain.pem
 ```
 
-**Configurar PostgreSQL con Let's Encrypt:**
+**¿Qué archivo usar en PostgreSQL?**
+- `fullchain.pem`: Certificado + cadena (esto es lo que usamos) ✅
+- `privkey.pem`: Clave privada (esto es lo que usamos) ✅
+- `cert.pem`: Solo certificado (sin cadena, puede causar problemas)
+- `chain.pem`: Solo cadena (sin certificado, incompleto)
+
+---
+
+##### **PASO 4: Configurar PostgreSQL con SSL (MÉTODO CORRECTO)**
+
+⚠️ **ERRORES QUE COMETIMOS (y las soluciones):**
+
+**ERROR 1: "could not load server certificate file"**
+```
+❌ INCORRECTO: Crear symlinks en /etc/postgresql/15/main/
+PostgreSQL busca archivos en /var/lib/postgresql/15/main/
+
+✅ CORRECTO: Crear symlinks en /var/lib/postgresql/15/main/
+```
+
+**ERROR 2: "Permission denied" al acceder a certificados**
+```
+❌ INCORRECTO: /etc/letsencrypt/ tiene permisos 700 (solo root)
+Usuario postgres no puede acceder
+
+✅ CORRECTO: Cambiar /etc/letsencrypt/live/ y archive/ a 755
+```
+
+**ERROR 3: Certificado no se actualiza después de renovación de Certbot**
+```
+❌ INCORRECTO: Copiar certificados a /etc/postgresql/15/main/
+Certbot renueva en /etc/letsencrypt/live/ pero copia quedan obsoletas
+
+✅ CORRECTO: Usar symlinks a /etc/letsencrypt/live/
+Certbot actualiza /etc/letsencrypt/live/ automáticamente
+Symlinks siempre apuntan a la versión actual
+```
+
+**Paso 4.1: Crear symlinks en el directorio de datos de PostgreSQL**
 
 ```bash
-# Editar postgresql.conf
-sudo nano /etc/postgresql/15/main/postgresql.conf
+# CREAR SYMLINKS en /var/lib/postgresql/15/main/ (NO en /etc/postgresql/)
+sudo ln -sf /etc/letsencrypt/live/postgres.ejaniot.com/fullchain.pem \
+  /var/lib/postgresql/15/main/server.crt
 
-# Busca y descomenta (o agrega):
+sudo ln -sf /etc/letsencrypt/live/postgres.ejaniot.com/privkey.pem \
+  /var/lib/postgresql/15/main/server.key
+```
+
+**Verificar que se crearon correctamente:**
+
+```bash
+# Ver symlinks
+ls -la /var/lib/postgresql/15/main/server.*
+# Debe mostrar:
+# lrwxrwxrwx 1 root root 56 May 21 00:43 server.crt -> /etc/letsencrypt/live/postgres.ejaniot.com/fullchain.pem
+# lrwxrwxrwx 1 root root 54 May 21 00:43 server.key -> /etc/letsencrypt/live/postgres.ejaniot.com/privkey.pem
+
+# Verificar que apuntan a archivos válidos
+sudo ls -la /etc/letsencrypt/live/postgres.ejaniot.com/
+# Debe mostrar fullchain.pem y privkey.pem
+```
+
+**Paso 4.2: Arreglar permisos en directorios de Let's Encrypt**
+
+```bash
+# Let's Encrypt está protegido, pero postgres necesita acceso
+# Permitir que postgres pueda LEER (no escribir) los certificados
+sudo chmod 755 /etc/letsencrypt/live
+sudo chmod 755 /etc/letsencrypt/archive
+
+# Permitir que postgres sea dueño de los symlinks
+sudo chown postgres:postgres /var/lib/postgresql/15/main/server.crt
+sudo chown postgres:postgres /var/lib/postgresql/15/main/server.key
+```
+
+**Paso 4.3: Configurar PostgreSQL para usar SSL**
+
+```bash
+# Editar archivo de configuración
+sudo nano /etc/postgresql/15/main/postgresql.conf
+```
+
+Busca estas líneas (alrededor de la línea 105) y descomenta:
+
+```ini
 ssl = on
-ssl_cert_file = '/etc/letsencrypt/live/postgres.tudominio.com/fullchain.pem'
-ssl_key_file = '/etc/letsencrypt/live/postgres.tudominio.com/privkey.pem'
-
-# Guardar
-sudo systemctl restart postgresql
+ssl_cert_file = 'server.crt'
+ssl_key_file = 'server.key'
 ```
 
-**Problema: PostgreSQL no puede leer archivos de Let's Encrypt**
+**¿Por qué rutas relativas, no absolutas?**
+
+PostgreSQL busca archivos **relativamente** al directorio de datos:
+- `server.crt` → busca en `/var/lib/postgresql/15/main/server.crt` ✅
+- `/etc/postgresql/15/main/server.crt` → NO funcionaría ❌
+- `/etc/letsencrypt/live/.../fullchain.pem` → NO funcionaría sin permisos ❌
+
+**Paso 4.4: Reiniciar PostgreSQL y verificar**
 
 ```bash
-# Solución: Copiar certificados a directorio de PostgreSQL
-sudo cp /etc/letsencrypt/live/postgres.tudominio.com/fullchain.pem \
-  /etc/postgresql/15/main/server.crt
-
-sudo cp /etc/letsencrypt/live/postgres.tudominio.com/privkey.pem \
-  /etc/postgresql/15/main/server.key
-
-# Asignar permisos
-sudo chmod 600 /etc/postgresql/15/main/server.key
-sudo chown postgres:postgres /etc/postgresql/15/main/server.*
-
-# Editar postgresql.conf
-sudo nano /etc/postgresql/15/main/postgresql.conf
-
-# Usar las copias locales:
-ssl_cert_file = '/etc/postgresql/15/main/server.crt'
-ssl_key_file = '/etc/postgresql/15/main/server.key'
-
+# Reiniciar servicio
 sudo systemctl restart postgresql
+
+# Verificar estado
+sudo pg_lsclusters
+# Debe mostrar: 15  main  5432  online
+
+# Si está "down", ver el error:
+sudo tail -50 /var/log/postgresql/postgresql-15-main.log
 ```
+
+**Paso 4.5: Probar conexión SSL**
+
+```bash
+# Conexión LOCAL con SSL obligatorio
+PGSSLMODE=require psql -h localhost -U vanessaapp -d vanessaapp_db
+
+# Deberías ver:
+# SSL connection (protocol: TLSv1.3, cipher: TLS_AES_256_GCM_SHA384, compression: off)
+# vanessaapp_db=>
+```
+
+Si ves eso, ✅ SSL está funcionando correctamente con TLS 1.3 (excelente).
+
+---
+
+##### **PASO 5: Configurar Renovación Automática de Certificados**
+
+**¿Por qué es importante?**
+- Let's Encrypt certificados duran 90 días
+- Necesitas renovarlos automáticamente
+- Con symlinks, la renovación es automática (el symlink siempre apunta a la versión actual)
+
+**Paso 5.1: Verificar que Certbot timer esté habilitado**
+
+```bash
+# Verificar auto-renovación
+sudo systemctl status certbot.timer
+# Debe mostrar "active (enabled)"
+
+# Ver cuándo se ejecutó por última vez
+sudo systemctl list-timers certbot.timer
+```
+
+Si no está habilitado:
+```bash
+sudo systemctl enable certbot.timer
+sudo systemctl start certbot.timer
+```
+
+**Paso 5.2: Probar renovación manualmente (OPCIONAL)**
+
+```bash
+# Hacer una prueba de renovación (sin aplicar cambios)
+sudo certbot renew --dry-run
+
+# Debe mostrar: "Congratulations, all renewals succeeded"
+```
+
+**Paso 5.3: ¿Y PostgreSQL? ¿Necesito reiniciarlo después de renovar?**
+
+```
+NO ES NECESARIO por estos motivos:
+
+1. Usamos symlinks a /etc/letsencrypt/live/postgres.ejaniot.com/
+2. Certbot actualiza los archivos en /etc/letsencrypt/live/ automáticamente
+3. Los symlinks SIEMPRE apuntan a la versión actual
+4. PostgreSQL sigue funcionando sin reiniciar
+
+Ejemplo:
+  /var/lib/postgresql/15/main/server.crt
+  └─> /etc/letsencrypt/live/postgres.ejaniot.com/fullchain.pem
+      └─> /etc/letsencrypt/archive/postgres.ejaniot.com/fullchain100.pem (vieja)
+      
+Cuando Certbot renueva:
+  /var/lib/postgresql/15/main/server.crt
+  └─> /etc/letsencrypt/live/postgres.ejaniot.com/fullchain.pem
+      └─> /etc/letsencrypt/archive/postgres.ejaniot.com/fullchain101.pem (nueva)
+      
+El symlink automáticamente apunta a la nueva versión ✅
+```
+
+---
+
+##### **RESUMEN: Estructura Final Correcta**
+
+```
+/etc/letsencrypt/
+├── live/
+│   └── postgres.ejaniot.com/
+│       ├── fullchain.pem → ../../archive/postgres.ejaniot.com/fullchain1.pem
+│       ├── privkey.pem → ../../archive/postgres.ejaniot.com/privkey1.pem
+│       ├── cert.pem → ../../archive/postgres.ejaniot.com/cert1.pem
+│       └── chain.pem → ../../archive/postgres.ejaniot.com/chain1.pem
+└── archive/
+    └── postgres.ejaniot.com/
+        ├── fullchain1.pem (certificado actual)
+        ├── privkey1.pem (clave privada actual)
+        ├── cert1.pem
+        └── chain1.pem
+
+/var/lib/postgresql/15/main/
+├── server.crt → /etc/letsencrypt/live/postgres.ejaniot.com/fullchain.pem
+├── server.key → /etc/letsencrypt/live/postgres.ejaniot.com/privkey.pem
+└── ... (otros archivos de PostgreSQL)
+
+postgresql.conf:
+  ssl = on
+  ssl_cert_file = 'server.crt'
+  ssl_key_file = 'server.key'
+```
+
+**Flujo de Renovación Automática:**
+
+```
+[90 días después]
+  ↓
+Certbot Timer se ejecuta
+  ↓
+Descarga nuevo certificado
+  ↓
+Actualiza /etc/letsencrypt/archive/postgres.ejaniot.com/fullchain2.pem
+  ↓
+Actualiza symlink /etc/letsencrypt/live/postgres.ejaniot.com/fullchain.pem
+  ↓
+PostgreSQL lee del symlink (que ahora apunta a fullchain2.pem)
+  ↓
+✅ SSL sigue funcionando sin intervención manual
+```
+
+---
+
+##### **Tabla de Comparación: Métodos SSL**
+
+| Aspecto | Auto-Firmado | Let's Encrypt | Let's Encrypt + Symlinks |
+|---|---|---|---|
+| **Costo** | Gratis | Gratis | Gratis |
+| **Validez** | 365 días | 90 días | 90 días |
+| **Renovación** | Manual ❌ | Automática ✅ | Automática ✅ |
+| **Certificado válido** | ⚠️ Advertencias | ✅ Válido | ✅ Válido |
+| **Requiere dominio** | No | Sí | Sí |
+| **Recomendado para** | Testing | Producción | Producción ✅ |
+| **Complejidad** | Baja | Media | Media |
+| **Mantenimiento** | Alto | Bajo | Mínimo ✅ |
+| **Confianza** | Baja | Alta | Alta |
+
+
 
 ---
 
@@ -639,27 +965,229 @@ sudo crontab -e
 0 3 1 * * certbot renew --quiet
 ```
 
-**Para Auto-Renovar y Copiar a PostgreSQL:**
+---
 
-```bash
-sudo nano /etc/cron.d/renew-postgres-certs
+#### ⚡ Troubleshooting: Errores Comunes y Soluciones
+
+**ERROR 1: "could not load server certificate file \"server.crt\": No such file or directory"**
+
+**Síntoma:**
+```
+FATAL: could not load server certificate file "server.crt": No such file or directory
 ```
 
-```bash
-# Renovar certificados y copiar a PostgreSQL automáticamente
-# Se ejecuta el 1º de cada mes a las 3 AM
+**Causa:** Los symlinks están en el lugar incorrecto.
 
-0 3 1 * * root certbot renew --quiet && \
-  cp /etc/letsencrypt/live/postgres.tudominio.com/fullchain.pem \
-  /etc/postgresql/15/main/server.crt && \
-  cp /etc/letsencrypt/live/postgres.tudominio.com/privkey.pem \
-  /etc/postgresql/15/main/server.key && \
-  chown postgres:postgres /etc/postgresql/15/main/server.* && \
-  chmod 600 /etc/postgresql/15/main/server.key && \
-  systemctl restart postgresql
+❌ INCORRECTO:
+```bash
+/etc/postgresql/15/main/server.crt → /etc/letsencrypt/live/.../fullchain.pem
 ```
 
-Guarda: `Ctrl+O`, Enter, `Ctrl+X`
+PostgreSQL ejecuta como usuario `postgres` desde `/var/lib/postgresql/15/main/` y busca los archivos AHÍ, no en `/etc/postgresql/`.
+
+✅ CORRECTO:
+```bash
+/var/lib/postgresql/15/main/server.crt → /etc/letsencrypt/live/.../fullchain.pem
+```
+
+**Solución:**
+```bash
+# Eliminar symlinks incorrectos
+sudo rm /etc/postgresql/15/main/server.crt
+sudo rm /etc/postgresql/15/main/server.key
+
+# Crear en el lugar correcto
+sudo ln -sf /etc/letsencrypt/live/postgres.ejaniot.com/fullchain.pem \
+  /var/lib/postgresql/15/main/server.crt
+
+sudo ln -sf /etc/letsencrypt/live/postgres.ejaniot.com/privkey.pem \
+  /var/lib/postgresql/15/main/server.key
+
+# Reiniciar PostgreSQL
+sudo systemctl restart postgresql
+```
+
+---
+
+**ERROR 2: "Permission denied" al acceder a certificados de Let's Encrypt**
+
+**Síntoma:**
+```
+FATAL: could not open file "/etc/letsencrypt/live/...: Permission denied
+```
+
+**Causa:** El usuario `postgres` no puede leer los directorios `/etc/letsencrypt/live/` o `/etc/letsencrypt/archive/` porque tienen permisos 700 (solo root).
+
+**Solución:**
+```bash
+# Permitir lectura en directorios de letsencrypt
+sudo chmod 755 /etc/letsencrypt/live
+sudo chmod 755 /etc/letsencrypt/archive
+
+# Asegurarse que postgres es dueño de los symlinks
+sudo chown postgres:postgres /var/lib/postgresql/15/main/server.crt
+sudo chown postgres:postgres /var/lib/postgresql/15/main/server.key
+
+# Reiniciar PostgreSQL
+sudo systemctl restart postgresql
+```
+
+---
+
+**ERROR 3: Conexión exitosa SIN SSL (no estás usando SSL aunque esté habilitado)**
+
+**Síntoma:**
+```
+$ psql -h localhost -U vanessaapp -d vanessaapp_db
+(conecta pero sin SSL)
+```
+
+**Causa:** PostgreSQL permite conexión sin SSL. Para OBLIGAR SSL:
+
+**Solución (en pg_hba.conf):**
+
+```bash
+sudo nano /etc/postgresql/15/main/pg_hba.conf
+```
+
+```ini
+# Para OBLIGAR SSL, usa "hostssl" en lugar de "host":
+hostssl    all             vanessaapp      0.0.0.0/0               scram-sha-256
+hostssl    all             vanessaapp      ::/0                    scram-sha-256
+
+# Rechazar conexiones NO-SSL
+host       all             vanessaapp      0.0.0.0/0               reject
+host       all             vanessaapp      ::/0                    reject
+```
+
+Luego:
+```bash
+sudo systemctl restart postgresql
+
+# Probar: debe fallar sin --sslmode=require
+psql -h localhost -U vanessaapp -d vanessaapp_db
+# Connection refused (porque no usamos SSL)
+
+# Probar: debe conectar CON SSL
+PGSSLMODE=require psql -h localhost -U vanessaapp -d vanessaapp_db
+# Conecta exitosamente
+```
+
+---
+
+**ERROR 4: Certificado no se actualiza después de renovación de Certbot**
+
+**Síntoma:**
+```
+- Certbot renovó el certificado exitosamente
+- Pero pgAdmin/clientes siguen mostrando certificado viejo
+- O ves error "certificate signature expired"
+```
+
+**Causa:** Copiaste certificados a `/etc/postgresql/15/main/` en lugar de usar symlinks.
+
+❌ INCORRECTO (los certificados quedan obsoletos):
+```bash
+sudo cp /etc/letsencrypt/live/.../fullchain.pem /etc/postgresql/15/main/server.crt
+# Certbot renueva en /etc/letsencrypt/live/
+# Pero la copia en /etc/postgresql/ no se actualiza ❌
+```
+
+✅ CORRECTO (siempre apunta al certificado actual):
+```bash
+sudo ln -sf /etc/letsencrypt/live/.../fullchain.pem \
+  /var/lib/postgresql/15/main/server.crt
+# Certbot actualiza /etc/letsencrypt/live/
+# El symlink automáticamente apunta a la versión nueva ✅
+```
+
+**Solución:**
+1. Eliminar los certificados copiados (si existen)
+2. Crear symlinks (ver ERROR 1)
+3. NO necesitas hacer nada cuando Certbot renueva
+
+---
+
+**ERROR 5: "pg_lsclusters" muestra "down" después de cambiar SSL**
+
+**Síntoma:**
+```
+$ sudo pg_lsclusters
+Ver Cluster Port Status Owner Data directory
+15  main    5432 down   postgres /var/lib/postgresql/15/main
+```
+
+**Causa:** PostgreSQL no puede arrancar debido a error en SSL.
+
+**Diagnóstico:**
+```bash
+# Ver el error exacto:
+sudo tail -100 /var/log/postgresql/postgresql-15-main.log
+
+# O iniciar manualmente para ver error en terminal:
+sudo -u postgres /usr/lib/postgresql/15/bin/postgres \
+  -D /var/lib/postgresql/15/main \
+  -c config_file=/etc/postgresql/15/main/postgresql.conf
+```
+
+**Soluciones comunes según el error:**
+
+Si dice "No such file or directory":
+```bash
+# Ver ERROR 1
+```
+
+Si dice "Permission denied":
+```bash
+# Ver ERROR 2
+```
+
+Si dice "invalid certificate" o "signature expired":
+```bash
+# Certbot renovó pero PostgreSQL lee certificado viejo
+# Solución: Usar symlinks (ERROR 4)
+# O reiniciar PostgreSQL después de renovar:
+sudo systemctl restart postgresql
+```
+
+---
+
+**ERROR 6: Certbot falla con "Could not start standalone TLS server"**
+
+**Síntoma:**
+```
+Error starting standalone mode server
+Could not start standalone TLS server at (0.0.0.0, 443)
+```
+
+**Causa:** 
+- Puerto 443 ya está en uso
+- O algo está escuchando en el puerto
+- O PostgreSQL no está escuchando en 5432
+
+**Solución:**
+```bash
+# Ver qué está usando el puerto 443
+sudo ss -tlnp | grep 443
+sudo ss -tlnp | grep 80
+
+# Si Apache/Nginx está usando:
+sudo systemctl stop apache2
+sudo systemctl stop nginx
+
+# O usar DNS validation en lugar de standalone (más complejo)
+
+# O detener PostgreSQL temporalmente:
+sudo systemctl stop postgresql
+
+# Luego generar certificado
+sudo certbot certonly --standalone -d postgres.ejaniot.com
+
+# Reiniciar PostgreSQL
+sudo systemctl start postgresql
+```
+
+
 
 ---
 
@@ -937,26 +1465,346 @@ CREATE DATABASE otra_app;
 
 ### Crear Usuario y Asignar Permisos
 
+#### ⚠️ Observación Importante: Casos de Letra en PostgreSQL
+
+**PostgreSQL convierte automáticamente los nombres de usuario y BD a minúsculas:**
+
+- `CREATE USER VanessaAPP` se crea como `vanessaapp`
+- `CREATE DATABASE VanessaAPP_DB` se crea como `vanessaapp_db`
+- **Las contraseñas SÍ preservan mayúsculas/minúsculas**
+
+Para forzar mayúsculas, usa comillas dobles: `CREATE USER "VanessaAPP"`
+
+**Recomendación:** Usa minúsculas directamente para evitar confusiones. Es la convención estándar en PostgreSQL.
+
+---
+
+#### Paso 1: Crear el Usuario en PostgreSQL
+
 ```bash
 sudo -u postgres psql
 
-# Crear usuario
-CREATE USER usuario_app WITH PASSWORD 'contraseña_segura';
+# Crear usuario con contraseña segura (se crea como "vanessaapp")
+CREATE USER vanessaapp WITH PASSWORD 'contraseña segura';
 
-# Dar permisos sobre base de datos
-ALTER DATABASE mi_app OWNER TO usuario_app;
-
-# O darle permisos específicos
-GRANT CONNECT ON DATABASE mi_app TO usuario_app;
-GRANT USAGE, CREATE ON SCHEMA public TO usuario_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO usuario_app;
+# Listar usuarios
+\du
 
 \q
 ```
 
 ---
 
-### Conectar desde Otra Máquina
+#### Paso 2: Crear Base de Datos y Asignar Permisos
+
+```bash
+sudo -u postgres psql
+
+# Crear bases de datos (se crean en minúsculas automáticamente)
+CREATE DATABASE seguridadvanessaapp_db OWNER vanessaapp;
+CREATE DATABASE vanessaapp_db OWNER vanessaapp;
+
+# Asignar permisos específicos
+GRANT CONNECT ON DATABASE seguridadvanessaapp_db TO vanessaapp;
+GRANT CONNECT ON DATABASE vanessaapp_db TO vanessaapp;
+GRANT USAGE, CREATE ON SCHEMA public TO vanessaapp;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO vanessaapp;
+
+# Listar bases de datos
+\l
+
+\q
+```
+
+---
+
+#### Paso 3: Permitir Conexión Remota en pg_hba.conf
+
+**Edita el archivo de control de acceso:**
+
+```bash
+sudo nano /etc/postgresql/15/main/pg_hba.conf
+```
+
+**Agrega estas líneas ANTES de las líneas genéricas (si existen):**
+
+```ini
+# ⚠️ SECURITY: Rechazar usuario postgres desde internet
+host    postgres        postgres        0.0.0.0/0               reject
+host    postgres        postgres        ::/0                    reject
+
+# ✅ REMOTE: Permitir usuario vanessaapp desde cualquier IP
+host    all             vanessaapp      0.0.0.0/0               scram-sha-256
+host    all             vanessaapp      ::/0                    scram-sha-256
+
+# ⛔ DEFENSA FINAL: Rechazar todo lo demás
+host    all             all             0.0.0.0/0               reject
+host    all             all             ::/0                    reject
+```
+
+**Explicación de cada línea:**
+| Parámetro | Significa |
+|---|---|
+| `host` | Conexión TCP/IP remota |
+| `postgres` / `VanessaAPP` | Usuario específico |
+| `0.0.0.0/0` | Cualquier IPv4 |
+| `::/0` | Cualquier IPv6 |
+| `scram-sha-256` | Autenticación con contraseña (segura) |
+| `reject` | Rechazar conexión |
+
+**Guarda:** `Ctrl+O`, Enter, `Ctrl+X`
+
+---
+
+#### Paso 4: Reiniciar PostgreSQL y Verificar
+
+```bash
+# Reiniciar servicio
+sudo systemctl restart postgresql
+
+# Verificar estado
+sudo systemctl status postgresql
+
+# Ver que escucha en puerto 5432
+sudo ss -tlnp | grep 5432
+```
+
+---
+
+#### Paso 5: Probar Conexión Remota
+
+**Desde otra máquina en la red local:**
+
+```bash
+# Conectar con el usuario vanessaapp (minúsculas)
+psql -h 192.168.1.X -U vanessaapp -d vanessaapp_db
+# Ingresa contraseña: contraseña segura
+```
+
+**Desde pgAdmin (GUI):**
+1. File → Add New Server
+2. Connection:
+   - Host name: `192.168.1.X` (IP del servidor)
+   - Port: `5432`
+   - Username: `vanessaapp` (minúsculas)
+   - Password: `contraseña segura`
+   - Database: `vanessaapp_db` (minúsculas)
+3. Save
+
+---
+
+#### Resumen del Flujo Completo
+
+```bash
+# 1. Crear usuario (se crea como "vanessaapp")
+CREATE USER vanessaapp WITH PASSWORD 'contraseña segura';
+
+# 2. Crear bases de datos (se crean como "seguridadvanessaapp_db" y "vanessaapp_db")
+CREATE DATABASE seguridadvanessaapp_db OWNER vanessaapp;
+CREATE DATABASE vanessaapp_db OWNER vanessaapp;
+
+# 3. Asignar permisos
+GRANT CONNECT ON DATABASE seguridadvanessaapp_db TO vanessaapp;
+GRANT CONNECT ON DATABASE vanessaapp_db TO vanessaapp;
+GRANT USAGE, CREATE ON SCHEMA public TO vanessaapp;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO vanessaapp;
+
+# 4. Agregar en pg_hba.conf (permitir conexión remota)
+# host    all    vanessaapp    0.0.0.0/0    scram-sha-256
+
+# 5. Reiniciar PostgreSQL
+sudo systemctl restart postgresql
+
+# 6. ¡Listo! Conectar desde otra máquina
+psql -h tu_ip_servidor -U vanessaapp -d vanessaapp_db
+```
+
+---
+
+## 📋 INFORME FINAL: Configuración Segura PostgreSQL 15
+
+### ✅ Arquitectura Implementada
+
+**Componentes:**
+1. **Servidor PostgreSQL:** 192.168.1.102:5432 (red local)
+2. **Usuarios:** postgres (admin local), vanessaapp (app remota)
+3. **Bases de datos:** vanessaapp_db, seguridadvanessaapp_db
+4. **Port Forwarding:** Movistar (15432 → 5432)
+5. **Firewall:** UFW habilitado
+
+---
+
+### ✅ Orden Correcto de pg_hba.conf (CRÍTICO)
+
+**Regla: PostgreSQL evalúa de arriba a abajo. La primera que coincide se aplica.**
+
+**Configuración correcta:**
+
+```ini
+# 1️⃣ PRIMERO: Permitir postgres SOLO desde red local
+host    all             postgres        192.168.1.0/24          scram-sha-256
+
+# 2️⃣ SEGUNDO: Rechazar postgres desde internet
+host    postgres        postgres        0.0.0.0/0               reject
+host    postgres        postgres        ::/0                    reject
+
+# 3️⃣ TERCERO: Permitir vanessaapp desde cualquier IP
+host    all             vanessaapp      0.0.0.0/0               scram-sha-256
+host    all             vanessaapp      ::/0                    scram-sha-256
+
+# 4️⃣ CUARTO: Rechazar todo lo demás
+host    all             all             0.0.0.0/0               reject
+host    all             all             ::/0                    reject
+```
+
+**¿Por qué este orden?**
+- Si primero está el rechazo de postgres, rechaza ANTES de permitir desde local
+- Las líneas más específicas deben ir ANTES que las genéricas
+- Ejemplo: permitir desde 192.168.1.0/24 ANTES que rechazar desde 0.0.0.0/0
+
+---
+
+### ✅ Convención: Todo en Minúsculas
+
+PostgreSQL convierte automáticamente los nombres a minúsculas:
+
+```sql
+CREATE USER VanessaAPP → Se crea como vanessaapp
+CREATE DATABASE VanessaAPP_DB → Se crea como vanessaapp_db
+```
+
+**Conexiones siempre con minúsculas:**
+```bash
+psql -h 192.168.1.102 -U vanessaapp -d vanessaapp_db
+# NO: psql -h 192.168.1.102 -U VanessaAPP -d VanessaAPP_DB ❌
+```
+
+---
+
+### ✅ Matriz de Acceso
+
+| Usuario | Origen | Método | Acceso |
+|---|---|---|---|
+| `postgres` | Red local (192.168.1.0/24) | scram-sha-256 | ✅ PERMITIDO |
+| `postgres` | Internet (0.0.0.0/0) | - | ❌ BLOQUEADO |
+| `vanessaapp` | Red local (192.168.1.0/24) | scram-sha-256 | ✅ PERMITIDO |
+| `vanessaapp` | Internet (0.0.0.0/0) | scram-sha-256 | ✅ PERMITIDO |
+| Otros usuarios | Cualquier lugar | - | ❌ BLOQUEADO |
+
+---
+
+### ✅ Flujos de Conexión
+
+#### Escenario 1: Admin desde Casa
+```
+Tu PC (192.168.1.100)
+  ↓
+pgAdmin (GUI)
+  ↓
+Servidor PostgreSQL (192.168.1.102:5432)
+  ↓
+Usuario: postgres
+Base de datos: postgres
+SSL Mode: disable
+Resultado: ✅ CONECTA
+```
+
+#### Escenario 2: Aplicación desde Internet
+```
+Servidor/App Externa (IP pública)
+  ↓
+Internet
+  ↓
+Modem Movistar (Port Forwarding 15432 → 5432)
+  ↓
+Servidor PostgreSQL (192.168.1.102:5432)
+  ↓
+Usuario: vanessaapp
+Base de datos: vanessaapp_db
+SSL Mode: disable
+Resultado: ✅ CONECTA
+```
+
+#### Escenario 3: Intento de Ataque
+```
+Atacante (IP pública)
+  ↓
+Internet
+  ↓
+Modem Movistar (15432)
+  ↓
+Servidor PostgreSQL
+  ↓
+Usuario: postgres (INTENTADO)
+Base de datos: postgres
+Resultado: ❌ BLOQUEADO por pg_hba.conf
+```
+
+---
+
+### ✅ Seguridad Implementada
+
+| Componente | Medida |
+|---|---|
+| **Usuario postgres** | Restringido solo a red local |
+| **Usuario vanessaapp** | Autenticación scram-sha-256 |
+| **Bases de datos** | Propiedad asignada por usuario |
+| **Firewall** | UFW abierto solo para 5432 |
+| **Port Forwarding** | Movistar (puerto no-estándar 15432) |
+| **Contraseñas** | Mínimo 16 caracteres |
+| **Defensa final** | Rechazo explícito de todas las demás conexiones |
+
+---
+
+### ✅ Testing Realizado
+
+**Prueba 1: postgres desde local (esperado: conecta)**
+```bash
+psql -h 192.168.1.102 -U postgres -d postgres
+Resultado: ✅ FUNCIONA
+```
+
+**Prueba 2: vanessaapp desde local (esperado: conecta)**
+```bash
+psql -h 192.168.1.102 -U vanessaapp -d vanessaapp_db
+Resultado: ✅ FUNCIONA
+```
+
+**Prueba 3: postgres desde internet (esperado: rechazado)**
+```bash
+psql -h tu_ip_publica -p 15432 -U postgres -d postgres
+Resultado: ❌ pg_hba.conf rejects connection (ESPERADO)
+```
+
+**Prueba 4: vanessaapp desde internet (esperado: conecta)**
+```bash
+psql -h tu_ip_publica -p 15432 -U vanessaapp -d vanessaapp_db
+Resultado: ✅ FUNCIONA (una vez que port forwarding está activo)
+```
+
+---
+
+### ✅ Errores Comunes y Soluciones
+
+**Error: "pg_hba.conf rejects connection"**
+- Causa: Orden incorrecto de líneas en pg_hba.conf
+- Solución: Verificar que líneas de PERMISO están ANTES que de RECHAZO
+
+**Error: "database does not exist"**
+- Causa: Nombres en mayúsculas (VanessaAPP_DB en lugar de vanessaapp_db)
+- Solución: Usar siempre minúsculas en conexiones
+
+**Error: "SSL encryption required"** (en pgAdmin)
+- Causa: pgAdmin intenta SSL pero servidor no lo requiere
+- Solución: Cambiar "SSL Mode" a "disable" en pgAdmin
+
+**Error: "could not load server certificate file"**
+- Causa: Certificados en lugar incorrecto (`/etc/postgresql/15/main/` en lugar de `/var/lib/postgresql/15/main/`)
+- Solución: Crear symlinks en `/var/lib/postgresql/15/main/` como se explicó en sección SSL
+
+**Error: "permission denied" en certificados de Let's Encrypt**
+- Causa: Usuario `postgres` no puede acceder a `/etc/letsencrypt/`
+- Solución: Usar symlinks y dar permisos 755 a directorios `/etc/letsencrypt/`
 
 **Desde cliente Linux/Mac:**
 ```bash
@@ -1095,7 +1943,107 @@ sudo tail -f /var/log/postgresql/postgresql-15-main.log
 
 ---
 
-## ❓ Preguntas Frecuentes (FAQ)
+---
+
+## 🔐 SSL/TLS - Configuración Completa y Verificación
+
+### ✅ Verificar que SSL está Habilitado en PostgreSQL
+
+```bash
+# Conectar localmente
+sudo -u postgres psql -c "SHOW ssl;"
+# Debe mostrar: on
+
+# Ver detalles de protocolo SSL
+PGSSLMODE=require psql -h localhost -U vanessaapp -d vanessaapp_db -c "SELECT version();"
+```
+
+Si conectas y ves algo como:
+```
+SSL connection (protocol: TLSv1.3, cipher: TLS_AES_256_GCM_SHA384, compression: off)
+```
+
+✅ **SSL está funcionando correctamente**
+
+---
+
+### ✅ Actualizar pgAdmin para Usar SSL
+
+**Desde casa (red local):**
+
+Si pgAdmin está en la red local (192.168.1.X):
+
+1. En pgAdmin → Server → Properties
+2. Connection:
+   - Host name: `192.168.1.10` (IP local)
+   - Port: `5432`
+   - SSL Mode: `disable` o `prefer`
+   - Username: `postgres` o `vanessaapp`
+3. Save
+
+---
+
+**Desde internet (IP pública):**
+
+Si accedes desde fuera de la red:
+
+1. En pgAdmin → Server → Properties
+2. Connection:
+   - Host name: `postgres.tudominio.com` (Tu dominio)
+   - Port: `15432` (tu puerto forwarded)
+   - SSL Mode: `require` ✅ (OBLIGATORIO)
+   - Username: `vanessaapp`
+   - Password: `tu_contraseña`
+3. Save
+
+**⚠️ IMPORTANTE:** Con SSL obligatorio (`require`), pgAdmin rechazará cualquier conexión sin encriptación. Esto es lo que queremos para internet.
+
+---
+
+### ✅ Estructura Final de Certificados (Correcto)
+
+```
+/etc/letsencrypt/
+├── live/
+│   └── postgres.tudominio.com/
+│       ├── fullchain.pem (certificado + chain)
+│       └── privkey.pem (clave privada)
+└── archive/
+    └── postgres.tudominio.com/
+        ├── cert1.pem
+        ├── chain1.pem
+        ├── fullchain1.pem
+        └── privkey1.pem
+
+/var/lib/postgresql/15/main/
+├── server.crt → /etc/letsencrypt/live/postgres.tudominio.com/fullchain.pem
+├── server.key → /etc/letsencrypt/live/postgres.tudominio.com/privkey.pem
+└── ... (otros archivos de PostgreSQL)
+```
+
+**Nunca coloques certificados en `/etc/postgresql/15/main/`**
+- PostgreSQL ejecuta como usuario `postgres`
+- Los directorios en `/etc/postgresql/` tienen permisos muy restrictivos
+- Los symlinks en `/var/lib/postgresql/15/main/` **siempre funcionan correctamente**
+
+---
+
+### ✅ Checklist SSL/TLS Final
+
+- [ ] Let's Encrypt certificado generado: `certbot certonly --standalone -d postgres.tudominio.com`
+- [ ] Symlinks creados en `/var/lib/postgresql/15/main/server.{crt,key}`
+- [ ] Permisos en `/etc/letsencrypt/{live,archive}` son 755
+- [ ] PostgreSQL configurado: `ssl = on` en `postgresql.conf`
+- [ ] PostgreSQL reiniciado: `sudo systemctl restart postgresql`
+- [ ] Prueba local funciona: `PGSSLMODE=require psql -h localhost ...`
+- [ ] Prueba remota funciona: `PGSSLMODE=require psql -h postgres.tudominio.com ...`
+- [ ] pgAdmin SSL Mode actualizado a `require` para conexiones remotas
+- [ ] Renovación automática configurada en Certbot
+- [ ] Logs de PostgreSQL sin errores de certificado
+
+---
+
+
 
 ### P1: ¿Por qué no puedo conectar desde otra máquina?
 
@@ -1391,4 +2339,4 @@ Namespace dentro de una BD. Por defecto es "public".
 
 ---
 
-**¡Tu PostgreSQL 15 está listo para producción! 🎉**
+**¡Tu PostgreSQL 15 está listo para producción! By:SrJaniot  🎉**
